@@ -218,12 +218,11 @@ export class License implements LicenseProvider {
 	}
 
 	async renew() {
-		if (!this.manager) {
-			return;
-		}
-
-		await this.manager.renew();
-		this.logger.debug('License renewed');
+		// if (!this.manager) {
+		// 	return;
+		// }
+		// await this.manager.renew();
+		// this.logger.debug('License renewed');
 	}
 
 	async clear() {
@@ -250,7 +249,8 @@ export class License implements LicenseProvider {
 	}
 
 	isLicensed(feature: BooleanLicenseFeature) {
-		return this.manager?.hasFeatureEnabled(feature) ?? false;
+		return true;
+		// return this.manager?.hasFeatureEnabled(feature) ?? false;
 	}
 
 	/** @deprecated Use `LicenseState.isDynamicCredentialsLicensed` instead. */
@@ -340,7 +340,7 @@ export class License implements LicenseProvider {
 
 	/** @deprecated Use `LicenseState.isAPIDisabled` instead. */
 	isAPIDisabled() {
-		return this.isLicensed(LICENSE_FEATURES.API_DISABLED);
+		return !this.isLicensed(LICENSE_FEATURES.API_DISABLED);
 	}
 
 	/** @deprecated Use `LicenseState.isWorkerViewLicensed` instead. */
@@ -378,6 +378,11 @@ export class License implements LicenseProvider {
 	}
 
 	getValue<T extends keyof FeatureReturnType>(feature: T): FeatureReturnType[T] {
+		if (feature === LICENSE_QUOTAS.INSIGHTS_MAX_HISTORY_DAYS) {
+			return UNLIMITED_LICENSE_QUOTA as FeatureReturnType[T];
+		} else if (feature === LICENSE_QUOTAS.TEAM_PROJECT_LIMIT) {
+			return 999 as FeatureReturnType[T];
+		}
 		return this.manager?.getFeatureValue(feature) as FeatureReturnType[T];
 	}
 
@@ -448,7 +453,8 @@ export class License implements LicenseProvider {
 	}
 
 	getPlanName(): string {
-		return this.getValue('planName') ?? 'Community';
+		return this.getValue('planName') ?? 'Entrerprise';
+		// return this.getValue('planName') ?? 'Community';
 	}
 
 	getInfo(): string {

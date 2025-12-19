@@ -130,6 +130,7 @@ export class DbConnectionOptions {
 			ssl,
 			extra: {
 				idleTimeoutMillis: postgresConfig.idleTimeoutMs,
+				options: '-c timezone=UTC',
 			},
 		};
 	}

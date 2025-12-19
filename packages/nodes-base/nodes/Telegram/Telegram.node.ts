@@ -1802,6 +1802,18 @@ export class Telegram implements INodeType {
 						default: 0,
 						description: 'Width of the video',
 					},
+					{
+						displayName: 'Spoiler',
+						name: 'has_spoiler',
+						type: 'boolean',
+						default: false,
+						displayOptions: {
+							show: {
+								'/operation': ['sendPhoto'],
+							},
+						},
+						description: 'Whether the photo needs to be covered with a spoiler animation',
+					},
 				],
 			},
 			...getSendAndWaitProperties(
@@ -2186,6 +2198,9 @@ export class Telegram implements INodeType {
 							},
 						},
 					};
+					if (formData.has_spoiler !== undefined && formData.has_spoiler !== null) {
+						formData.has_spoiler = formData.has_spoiler.toString();
+					}
 
 					if (formData.reply_markup) {
 						formData.reply_markup = JSON.stringify(formData.reply_markup);
