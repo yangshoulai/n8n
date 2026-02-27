@@ -11,7 +11,7 @@ import AssistantIcon from '../AskAssistantIcon/AssistantIcon.vue';
 import AssistantText from '../AskAssistantText/AssistantText.vue';
 import InlineAskAssistantButton from '../InlineAskAssistantButton/InlineAskAssistantButton.vue';
 import N8nButton from '../N8nButton';
-import N8nIcon from '../N8nIcon';
+import N8nIconButton from '../N8nIconButton';
 import N8nPromptInput from '../N8nPromptInput';
 import N8nPromptInputSuggestions from '../N8nPromptInputSuggestions';
 import N8nScrollArea from '../N8nScrollArea/N8nScrollArea.vue';
@@ -41,6 +41,8 @@ interface Props {
 	suggestions?: WorkflowSuggestion[];
 	workflowId?: string;
 	pruneTimeHours?: number;
+	/** Custom message to show when all tools complete (instead of default "Workflow generated") */
+	thinkingCompletionMessage?: string;
 }
 
 const emit = defineEmits<{
@@ -133,6 +135,7 @@ function groupToolMessagesIntoThinking(
 	options: {
 		streaming?: boolean;
 		loadingMessage?: string;
+		thinkingCompletionMessage?: string;
 		toolIdsWithWorkflowUpdate?: Set<string | undefined>;
 		t: (key: string) => string;
 	},
@@ -241,7 +244,8 @@ function groupToolMessagesIntoThinking(
 		} else if (isActiveGroup && options.streaming) {
 			latestStatus = options.loadingMessage ?? options.t('assistantChat.thinking.processing');
 		} else if (groupGeneratedWorkflow) {
-			latestStatus = options.t('assistantChat.thinking.workflowGenerated');
+			latestStatus =
+				options.thinkingCompletionMessage ?? options.t('assistantChat.thinking.workflowGenerated');
 		} else {
 			latestStatus = options.t('assistantChat.thinking.thinking');
 		}
@@ -273,6 +277,7 @@ const normalizedMessages = computed(() => {
 	return groupToolMessagesIntoThinking(filterOutHiddenMessages(normalized), {
 		streaming: props.streaming,
 		loadingMessage: props.loadingMessage,
+		thinkingCompletionMessage: props.thinkingCompletionMessage,
 		toolIdsWithWorkflowUpdate: toolIdsWithWorkflowUpdate.value,
 		t,
 	});
@@ -291,6 +296,7 @@ const lastMessageQuickReplies = computed(() => {
 const textInputValue = ref<string>('');
 const promptInputRef = ref<InstanceType<typeof N8nPromptInput>>();
 const scrollAreaRef = ref<InstanceType<typeof N8nScrollArea>>();
+const suggestionsInputFocusFn = ref<(() => void) | null>(null);
 
 const inputWrapperRef = ref<HTMLDivElement | null>(null);
 
@@ -351,8 +357,11 @@ async function onSuggestionClick(suggestion: WorkflowSuggestion) {
 	await nextTick();
 	// Wait one more frame to ensure DOM is fully updated
 	await new Promise(requestAnimationFrame);
-	// Focus the input so user can edit it
-	promptInputRef.value?.focusInput();
+	if (suggestionsInputFocusFn.value) {
+		suggestionsInputFocusFn.value();
+	} else {
+		promptInputRef.value?.focusInput();
+	}
 }
 
 function onQuickReply(opt: ChatUI.QuickReply) {
@@ -456,13 +465,16 @@ defineExpose({
 						<AssistantIcon size="large" />
 						<AssistantText size="large" :text="t('assistantChat.aiAssistantLabel')" />
 					</div>
-					<span :class="$style.betaTag">{{ t('assistantChat.aiAssistantBetaLabel') }}</span>
 				</div>
 				<slot name="header" />
 			</div>
-			<div :class="$style.back" data-test-id="close-chat-button" @click="onClose">
-				<N8nIcon icon="arrow-right" color="text-base" />
-			</div>
+			<N8nIconButton
+				icon="x"
+				variant="ghost"
+				size="large"
+				data-test-id="close-chat-button"
+				@click="onClose"
+			/>
 		</div>
 		<div :class="$style.body">
 			<div v-if="normalizedMessages?.length || loadingMessage" :class="$style.messages">
@@ -485,7 +497,7 @@ defineExpose({
 								<ThinkingMessage
 									v-if="isThinkingGroupMessage(message)"
 									:items="message.items"
-									:default-expanded="true"
+									:default-expanded="streaming"
 									:latest-status-text="message.latestStatusText"
 									:is-streaming="streaming"
 									:class="getMessageStyles(message, i)"
@@ -517,6 +529,9 @@ defineExpose({
 									<template v-if="$slots['custom-message']" #custom-message="customMessageProps">
 										<slot name="custom-message" v-bind="customMessageProps" />
 									</template>
+									<template v-if="$slots['focused-nodes-chips']" #focused-nodes-chips="chipProps">
+										<slot name="focused-nodes-chips" v-bind="chipProps" />
+									</template>
 								</MessageWrapper>
 
 								<div
@@ -533,8 +548,8 @@ defineExpose({
 									>
 										<N8nButton
 											v-if="opt.text"
-											type="secondary"
-											size="mini"
+											variant="subtle"
+											size="xsmall"
 											@click="() => onQuickReply(opt)"
 										>
 											{{ opt.text }}
@@ -571,7 +586,26 @@ defineExpose({
 						@suggestion-click="onSuggestionClick"
 					>
 						<template #prompt-input>
+							<slot
+								v-if="$slots['suggestions-input']"
+								name="suggestions-input"
+								:model-value="textInputValue"
+								:on-update-model-value="(val: string) => (textInputValue = val)"
+								:placeholder="t('assistantChat.blankStateInputPlaceholder')"
+								:disabled="disabled"
+								:disabled-tooltip="disabledTooltip"
+								:streaming="streaming"
+								:credits-quota="creditsQuota"
+								:credits-remaining="creditsRemaining"
+								:show-ask-owner-tooltip="showAskOwnerTooltip"
+								:max-length="maxCharacterLength"
+								:on-submit="onSendMessage"
+								:on-stop="() => emit('stop')"
+								:on-upgrade-click="() => emit('upgrade-click')"
+								:register-focus="(fn: () => void) => (suggestionsInputFocusFn = fn)"
+							/>
 							<N8nPromptInput
+								v-else
 								ref="promptInputRef"
 								v-model="textInputValue"
 								:placeholder="t('assistantChat.blankStateInputPlaceholder')"
@@ -589,7 +623,7 @@ defineExpose({
 								@submit="onSendMessage"
 								@stop="emit('stop')"
 							>
-								<template v-if="$slots['extra-actions']" #beforeActions>
+								<template v-if="$slots['extra-actions']" #extra-actions>
 									<slot name="extra-actions" />
 								</template>
 							</N8nPromptInput>
@@ -620,7 +654,10 @@ defineExpose({
 		<div v-if="showFooterRating" :class="$style.feedbackWrapper" data-test-id="footer-rating">
 			<MessageRating minimal @feedback="onRateMessage" />
 		</div>
-		<div v-if="$slots.inputHeader && showBottomInput" :class="$style.inputHeaderWrapper">
+		<div
+			v-if="$slots.inputHeader && (showBottomInput || showSuggestions)"
+			:class="$style.inputHeaderWrapper"
+		>
 			<slot name="inputHeader" />
 		</div>
 		<div
@@ -655,7 +692,7 @@ defineExpose({
 				@submit="onSendMessage"
 				@stop="emit('stop')"
 			>
-				<template v-if="$slots['extra-actions']" #beforeActions>
+				<template v-if="$slots['extra-actions']" #extra-actions>
 					<slot name="extra-actions" />
 				</template>
 			</N8nPromptInput>
@@ -674,11 +711,12 @@ defineExpose({
 
 .header {
 	height: 65px; // same as header height in editor
-	padding: 0 var(--spacing--lg);
+	padding: 0 var(--spacing--sm) 0 var(--spacing--lg);
 	background-color: var(--color--background--light-3);
 	border: var(--border);
 	border-top: 0;
 	display: flex;
+	align-items: center;
 
 	div {
 		display: flex;
@@ -688,12 +726,6 @@ defineExpose({
 	> div:first-of-type {
 		width: 100%;
 	}
-}
-
-.betaTag {
-	color: var(--color--text);
-	font-size: var(--font-size--2xs);
-	font-weight: var(--font-weight--bold);
 }
 
 .body {
@@ -794,10 +826,6 @@ defineExpose({
 	button {
 		display: inline-flex;
 	}
-}
-
-.back:hover {
-	cursor: pointer;
 }
 
 .quickReplies {

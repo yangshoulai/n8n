@@ -2,6 +2,7 @@ import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 
 import type {
 	AgentMessageChunk,
+	MessagesCompactedChunk,
 	ToolProgressChunk,
 	WorkflowUpdateChunk,
 	StreamOutput,
@@ -69,7 +70,7 @@ describe('stream-processor', () => {
 				expect(result).toBeNull();
 			});
 
-			it('should skip compact_messages (responder handles user message)', () => {
+			it('should emit messages-compacted event for compact_messages', () => {
 				const chunk = {
 					compact_messages: {
 						messages: [
@@ -82,7 +83,10 @@ describe('stream-processor', () => {
 
 				const result = processStreamChunk('updates', chunk);
 
-				expect(result).toBeNull();
+				expect(result).toBeDefined();
+				expect(result?.messages).toHaveLength(1);
+				const message = result?.messages[0] as MessagesCompactedChunk;
+				expect(message.type).toBe('messages-compacted');
 			});
 
 			it('should handle responder with empty content', () => {
@@ -241,6 +245,23 @@ describe('stream-processor', () => {
 				expect(result).toBeDefined();
 				expect(result?.messages).toHaveLength(1);
 				expect(result?.messages[0]).toEqual(toolChunk);
+			});
+
+			it('should process assistant message chunks', () => {
+				const messageChunk: AgentMessageChunk = {
+					role: 'assistant',
+					type: 'message',
+					text: 'Here is how to set up credentials...',
+				};
+
+				const result = processStreamChunk('custom', messageChunk);
+
+				expect(result).toBeDefined();
+				expect(result?.messages).toHaveLength(1);
+				const message = result?.messages[0] as AgentMessageChunk;
+				expect(message.role).toBe('assistant');
+				expect(message.type).toBe('message');
+				expect(message.text).toBe('Here is how to set up credentials...');
 			});
 
 			it('should ignore non-tool chunks in custom mode', () => {
@@ -419,7 +440,7 @@ describe('stream-processor', () => {
 			expect(result[0]).not.toHaveProperty('revertVersionId');
 		});
 
-		it('should not include id when messageId is missing', () => {
+		it('should include HumanMessage and extract versionId even without messageId', () => {
 			const message = new HumanMessage({ content: 'Another message' });
 			message.additional_kwargs = { versionId: 'version-999' };
 
@@ -450,7 +471,7 @@ describe('stream-processor', () => {
 			expect(formatted.id).toBe('msg-complete');
 		});
 
-		it('should handle undefined additional_kwargs', () => {
+		it('should include HumanMessage with undefined additional_kwargs', () => {
 			const message = new HumanMessage({ content: 'Message without kwargs' });
 			// Message is created without additional_kwargs, so it's undefined by default
 
@@ -466,7 +487,7 @@ describe('stream-processor', () => {
 			expect(result[0]).not.toHaveProperty('id');
 		});
 
-		it('should handle empty additional_kwargs object', () => {
+		it('should include HumanMessage with empty additional_kwargs object', () => {
 			const message = new HumanMessage({ content: 'Empty kwargs' });
 			message.additional_kwargs = {};
 
@@ -498,7 +519,7 @@ describe('stream-processor', () => {
 			expect(result[0]).not.toHaveProperty('revertVersionId');
 		});
 
-		it('should only include id when messageId is a string', () => {
+		it('should include HumanMessage when messageId is not a string but exclude id from output', () => {
 			const message = new HumanMessage({ content: 'Non-string messageId' });
 			message.additional_kwargs = { versionId: 'version-456', messageId: 456 };
 
@@ -755,7 +776,9 @@ describe('stream-processor', () => {
 			expect(result[2].updates).toHaveLength(2); // input and output
 		});
 
-		it('should handle AIMessage with both content and tool_calls', () => {
+		it('should handle AIMessage with both content and tool_calls - only include tool calls', () => {
+			// When an AIMessage has tool_calls, the content is intermediate LLM "thinking" text
+			// that should be skipped. Only the tool calls should be formatted.
 			const aiMessage = new AIMessage('I will add a node for you');
 			aiMessage.tool_calls = [
 				{
@@ -770,13 +793,9 @@ describe('stream-processor', () => {
 
 			const result = formatMessages(messages);
 
-			expect(result).toHaveLength(2);
-			expect(result[0]).toEqual({
-				role: 'assistant',
-				type: 'message',
-				text: 'I will add a node for you',
-			});
-			expect(result[1].type).toBe('tool');
+			// Only tool message, content is skipped
+			expect(result).toHaveLength(1);
+			expect(result[0].type).toBe('tool');
 		});
 
 		it('should handle tool calls without args', () => {
@@ -1478,6 +1497,46 @@ describe('stream-processor', () => {
 			const result = cleanContextTags(input);
 			expect(result).toBe('Plain text without any tags');
 		});
+
+		it('should extract user request from XML tag format', () => {
+			const input = `<previous_requests>
+test
+</previous_requests>
+<workflow_file path="/workflow.js">
+1: const wf = workflow('id', 'name');
+</workflow_file>
+<user_request>
+add set node
+</user_request>`;
+
+			const result = cleanContextTags(input);
+			expect(result).toBe('add set node');
+		});
+
+		it('should extract multiline user request from XML tag', () => {
+			const input = `<workflow_file path="/workflow.js">
+code
+</workflow_file>
+<user_request>
+add a set node
+and connect it to the trigger
+</user_request>`;
+
+			const result = cleanContextTags(input);
+			expect(result).toBe('add a set node\nand connect it to the trigger');
+		});
+
+		it('should strip code builder tags when no user request marker found', () => {
+			const input = `<previous_requests>
+old request
+</previous_requests>
+<workflow_file path="/workflow.js">
+code
+</workflow_file>`;
+
+			const result = cleanContextTags(input);
+			expect(result).toBe('');
+		});
 	});
 
 	describe('edge cases', () => {
@@ -1500,6 +1559,18 @@ describe('stream-processor', () => {
 			const chunk = {
 				supervisor: {
 					messages: [{ content: 'Supervisor internal message' }],
+				},
+			};
+
+			const result = processStreamChunk('updates', chunk);
+
+			expect(result).toBeNull();
+		});
+
+		it('should skip assistant_subgraph state updates (text streamed via custom events)', () => {
+			const chunk = {
+				assistant_subgraph: {
+					messages: [{ content: 'Assistant response text' }],
 				},
 			};
 

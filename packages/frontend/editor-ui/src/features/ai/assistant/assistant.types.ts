@@ -23,6 +23,28 @@ export namespace ChatRequest {
 		expression: string;
 		resolvedValue?: unknown;
 		nodeType: string;
+		/** Parameter path where the expression is located (e.g., 'url', 'headers.authorization') */
+		parameterPath?: string;
+	}
+
+	/**
+	 * Context for a node selected/focused by the user.
+	 * Used for focused nodes feature - allows user to select specific nodes
+	 * for the AI to prioritize in its responses.
+	 *
+	 * Note: Only contains additional context not already in currentWorkflow.nodes.
+	 * The LLM should look up full node details (type, parameters, etc.) by matching
+	 * the `name` field against currentWorkflow.nodes[].name.
+	 */
+	export interface SelectedNodeContext {
+		/** Node display name - use to look up full node in currentWorkflow.nodes */
+		name: string;
+		/** Configuration issues/validation errors on the node (not in currentWorkflow) */
+		issues?: Record<string, string[]>;
+		/** Names of nodes that connect INTO this node (pre-resolved for convenience) */
+		incomingConnections: string[];
+		/** Names of nodes that this node connects TO (pre-resolved for convenience) */
+		outgoingConnections: string[];
 	}
 
 	export interface WorkflowContext {
@@ -30,6 +52,12 @@ export namespace ChatRequest {
 		currentWorkflow?: Partial<IWorkflowDb>;
 		executionData?: IRunExecutionData['resultData'];
 		expressionValues?: Record<string, ExpressionValue[]>;
+		/** Whether execution schema values were excluded (redacted) for privacy */
+		valuesExcluded?: boolean;
+		/** Node names whose output schema was derived from pin data */
+		pinnedNodes?: string[];
+		/** Nodes explicitly selected/focused by the user for AI context */
+		selectedNodes?: SelectedNodeContext[];
 	}
 
 	export interface ExecutionResultData {
@@ -97,7 +125,10 @@ export namespace ChatRequest {
 
 	export interface BuilderFeatureFlags {
 		templateExamples?: boolean;
+		codeBuilder?: boolean;
+		pinData?: boolean;
 		planMode?: boolean;
+		mergeAskBuild?: boolean;
 	}
 
 	export interface UserChatMessage {
@@ -150,6 +181,8 @@ export namespace ChatRequest {
 
 	// API-specific types that extend UI types
 	export interface CodeDiffMessage extends ChatUI.CodeDiffMessage {
+		sdkSessionId?: string;
+		nodeName?: string;
 		solution_count?: number;
 		quickReplies?: ChatUI.QuickReply[];
 	}
@@ -213,6 +246,10 @@ export namespace ChatRequest {
 		answers: PlanMode.QuestionResponse[];
 	}
 
+	export interface MessagesCompactedEvent {
+		type: 'messages-compacted';
+	}
+
 	// API-only types
 	export type MessageResponse =
 		| ((
@@ -230,7 +267,8 @@ export namespace ChatRequest {
 		  ) & {
 				quickReplies?: ChatUI.QuickReply[];
 		  })
-		| ChatUI.EndSessionMessage;
+		| ChatUI.EndSessionMessage
+		| MessagesCompactedEvent;
 
 	export interface ResponsePayload {
 		sessionId?: string;
@@ -441,4 +479,10 @@ export function isUserAnswersMessage(
 	msg: ChatRequest.MessageResponse,
 ): msg is ChatRequest.ApiUserAnswersMessage {
 	return 'type' in msg && msg.type === 'user_answers' && 'answers' in msg;
+}
+
+export function isMessagesCompactedEvent(
+	msg: ChatRequest.MessageResponse,
+): msg is ChatRequest.MessagesCompactedEvent {
+	return 'type' in msg && msg.type === 'messages-compacted';
 }

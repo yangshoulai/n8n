@@ -25,7 +25,12 @@ export interface ToolProgressChunk {
 export interface WorkflowUpdateChunk {
 	role: 'assistant';
 	type: 'workflow-updated';
+	/** JSON-stringified workflow */
 	codeSnippet: string;
+	/** Number of agentic loop iterations required */
+	iterationCount?: number;
+	/** Source code that generated the workflow (only populated during evaluations) */
+	sourceCode?: string;
 }
 
 /**
@@ -51,6 +56,35 @@ export interface PlanChunk {
 }
 
 /**
+ * Session messages chunk for persistence
+ * Contains the full message history for saving to session storage
+ */
+export interface SessionMessagesChunk {
+	type: 'session-messages';
+	/** Raw LangChain messages for session persistence */
+	messages: unknown[];
+}
+
+export interface CodeDiffChunk {
+	role: 'assistant';
+	type: 'code-diff';
+	suggestionId: string;
+	sdkSessionId: string;
+	codeDiff?: string;
+	description?: string;
+	nodeName?: string;
+	quickReplies?: unknown[];
+}
+
+/**
+ * Signals that message history was compacted (e.g. via /compact).
+ * Frontend should clear old messages when this is received.
+ */
+export interface MessagesCompactedChunk {
+	type: 'messages-compacted';
+}
+
+/**
  * Union type for all stream chunks
  */
 export type StreamChunk =
@@ -58,8 +92,11 @@ export type StreamChunk =
 	| ToolProgressChunk
 	| WorkflowUpdateChunk
 	| ExecutionRequestChunk
+	| SessionMessagesChunk
 	| QuestionsChunk
-	| PlanChunk;
+	| PlanChunk
+	| CodeDiffChunk
+	| MessagesCompactedChunk;
 
 /**
  * Stream output containing messages
