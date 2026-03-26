@@ -52,13 +52,14 @@ import {
 	N8nText,
 	N8nTooltip,
 } from '@n8n/design-system';
-import { injectWorkflowState } from '@/app/composables/useWorkflowState';
+import { injectWorkflowDocumentStore } from '@/app/stores/workflowDocument.store';
 type Props = {
 	node: INodeUi;
 	overrideCredType?: NodeParameterValueType;
 	readonly?: boolean;
 	showAll?: boolean;
 	hideIssues?: boolean;
+	skipAutoSelect?: boolean;
 };
 
 const props = withDefaults(defineProps<Props>(), {
@@ -66,6 +67,7 @@ const props = withDefaults(defineProps<Props>(), {
 	overrideCredType: '',
 	showAll: false,
 	hideIssues: false,
+	skipAutoSelect: false,
 });
 
 const emit = defineEmits<{
@@ -84,7 +86,7 @@ const ndvStore = useNDVStore();
 const uiStore = useUIStore();
 const workflowsStore = useWorkflowsStore();
 const projectsStore = useProjectsStore();
-const workflowState = injectWorkflowState();
+const workflowDocumentStore = injectWorkflowDocumentStore();
 const { isEnabled: isDynamicCredentialsEnabled } = useDynamicCredentials();
 
 // Quick connect
@@ -147,7 +149,7 @@ const selected = computed<Record<string, INodeCredentialsDetails>>(
 );
 
 const hasWorkflowResolver = computed(() => {
-	return !!workflowsStore.workflowSettings?.credentialResolverId;
+	return !!workflowDocumentStore?.value?.settings?.credentialResolverId;
 });
 
 function isCredentialResolvable(credentialType: string): boolean {
@@ -197,6 +199,7 @@ watch(
 watch(
 	credentialTypesNodeDescriptionDisplayed,
 	(types) => {
+		if (props.skipAutoSelect) return;
 		if (types.length === 0 || !isEmpty(selected.value)) return;
 
 		const allOptions = types.map((type) => type.options).flat();
@@ -336,6 +339,7 @@ function createNewCredential(
 	credentialType: string,
 	listenForAuthChange: boolean = false,
 	showAuthOptions = false,
+	forceManualMode = false,
 ) {
 	if (listenForAuthChange) {
 		// If new credential dialog is open, start listening for auth type change which should happen in the modal
@@ -344,7 +348,7 @@ function createNewCredential(
 		subscribedToCredentialType.value = credentialType;
 	}
 
-	uiStore.openNewCredential(credentialType, showAuthOptions);
+	uiStore.openNewCredential(credentialType, showAuthOptions, forceManualMode);
 	telemetry.track('User opened Credential modal', {
 		credential_type: credentialType,
 		source: 'node',
@@ -444,7 +448,7 @@ function onCredentialSelected(
 		);
 		const authOption = getAuthTypeForNodeCredential(nodeType.value, nodeCredentialDescription);
 		if (authOption) {
-			updateNodeAuthType(workflowState, props.node, authOption.value);
+			updateNodeAuthType(workflowsStore.workflowId, props.node, authOption.value);
 			const parameterData = {
 				name: `parameters.${mainNodeAuthField.value.name}`,
 				value: authOption.value,
@@ -563,7 +567,7 @@ async function onQuickConnectSignIn(credentialTypeName: string) {
 		const credential = await connect({
 			credentialTypeName,
 			nodeType: props.node.type,
-			source: 'node',
+			source: 'node_type',
 			serviceName,
 		});
 
@@ -593,6 +597,9 @@ async function onQuickConnectSignIn(credentialTypeName: string) {
 				color="text-dark"
 				data-test-id="credentials-label"
 			>
+				<template v-if="$slots['label-postfix']" #options>
+					<slot name="label-postfix" />
+				</template>
 				<div v-if="readonly">
 					<N8nInput
 						:model-value="getSelectedName(type.name)"
@@ -625,7 +632,7 @@ async function onQuickConnectSignIn(credentialTypeName: string) {
 							underline
 							size="small"
 							data-test-id="setup-manually-link"
-							@click="createNewCredential(type.name, true, showMixedCredentials(type))"
+							@click="createNewCredential(type.name, true, showMixedCredentials(type), true)"
 						>
 							{{ i18n.baseText('nodeCredentials.quickConnect.setupManually') }}
 						</N8nLink>

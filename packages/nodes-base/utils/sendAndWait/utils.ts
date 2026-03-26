@@ -344,7 +344,13 @@ export async function sendAndWaitWebhook(this: IWebhookFunctions) {
 		| 'freeText'
 		| 'customForm';
 
-	if (responseType === 'approval' && isbot(req.headers['user-agent'])) {
+	if (
+		responseType === 'approval' &&
+		(isbot(req.headers['user-agent']) ||
+			// Microsoft Teams link preview service (SkypeSpaces) automatically fetches
+			// URLs in chat messages for rich previews, which would trigger the approval
+			req.headers['user-agent']?.includes('SkypeSpaces'))
+	) {
 		res.send('');
 		return { noWebhookResponse: true };
 	}
@@ -481,7 +487,6 @@ export function getSendAndWaitConfig(context: IExecuteFunctions): SendAndWaitCon
 
 	const responseType = context.getNodeParameter('responseType', 0, 'approval') as string;
 
-	context.setSignatureValidationRequired();
 	const approvedSignedResumeUrl = context.getSignedResumeUrl({ approved: 'true' });
 
 	if (responseType === 'freeText' || responseType === 'customForm') {
